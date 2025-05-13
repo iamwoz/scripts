@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Usage: ./zfs-woz-v6.sh <poolname|--all>
+# Usage: ./zfs-woz-v7.sh <poolname|--all>
 set -euo pipefail
 
 # ─── Device and State Mapping ───────────────────────────────
@@ -49,7 +49,13 @@ get_disk_info() {
   local sd_dev="$1"
   local devname
   devname=$(basename "$sd_dev")
-  lsblk -S -o NAME,VENDOR,MODEL,SERIAL | awk -v dev="$devname" '$1 == dev {print $2, $3, $4}'
+
+  local vendor model serial
+  vendor=$(lsblk -S -n -o NAME,VENDOR | awk -v dev="$devname" '$1 == dev { print $2 }')
+  model=$(lsblk -S -n -o NAME,MODEL  | awk -v dev="$devname" '$1 == dev { print $2 }')
+  serial=$(lsblk -S -n -o NAME,SERIAL | awk -v dev="$devname" '$1 == dev { print $2 }')
+
+  echo "$vendor|$model|$serial"
 }
 
 print_header() {
@@ -72,7 +78,7 @@ print_device_info() {
   fi
 
   sg_dev=$(resolve_sg "$sd_dev")
-  read -r vendor model serial <<< "$(get_disk_info "$sd_dev")"
+  IFS="|" read -r vendor model serial <<< "$(get_disk_info "$sd_dev")"
   size=$(lsblk "$partuuid_dev" -o SIZE -dn 2>/dev/null || echo "N/A")
 
   local format="%-60s %-6s %-10s %-24s %-22s %-10s %-10s %-10s\n"
