@@ -1,12 +1,9 @@
 #!/bin/bash
 
-# Usage: ./zfs-woz-faulted-row-highlight.sh <poolname|--all>
+# Usage: ./zfs-woz-v6.sh <poolname|--all>
 set -euo pipefail
 
-if [[ -z "${1:-}" ]]; then
-  echo "Usage: $0 <poolname|--all>"
-  exit 1
-fi
+# ─── Device and State Mapping ───────────────────────────────
 
 get_devices_for_pool() {
   local pool="$1"
@@ -29,7 +26,7 @@ resolve_sd() {
   local dev="$1"
   local sd_dev
   sd_dev=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -n1)
-  [[ -n "$sd_dev" ]] && echo "/dev/$sd_dev" || echo "N/A"
+  [[ -n "$sd_dev" ]] && echo "/dev/$sd_dev" || echo "$dev"
 }
 
 resolve_sg() {
@@ -50,7 +47,9 @@ resolve_sg() {
 
 get_disk_info() {
   local sd_dev="$1"
-  lsblk -S -o NAME,VENDOR,MODEL,SERIAL | awk -v dev="$(basename "$sd_dev")" '$1 == dev {print $2, $3, $4}'
+  local devname
+  devname=$(basename "$sd_dev")
+  lsblk -S -o NAME,VENDOR,MODEL,SERIAL | awk -v dev="$devname" '$1 == dev {print $2, $3, $4}'
 }
 
 print_header() {
@@ -61,13 +60,20 @@ print_header() {
 
 print_device_info() {
   local partuuid_dev="$1"
-  local raw_state="${DEV_STATES[$partuuid_dev]:-UNKNOWN}"
+  local raw_state="${DEV_STATES[$partuuid_dev]:-UNUSED}"
 
   local size sd_dev sg_dev vendor model serial
-  size=$(lsblk "$partuuid_dev" -o SIZE -dn 2>/dev/null || echo "N/A")
-  sd_dev=$(resolve_sd "$partuuid_dev")
+
+  # For unassigned devices passed in as /dev/sdX
+  if [[ "$partuuid_dev" =~ ^/dev/sd[a-z]+$ ]]; then
+    sd_dev="$partuuid_dev"
+  else
+    sd_dev=$(resolve_sd "$partuuid_dev")
+  fi
+
   sg_dev=$(resolve_sg "$sd_dev")
   read -r vendor model serial <<< "$(get_disk_info "$sd_dev")"
+  size=$(lsblk "$partuuid_dev" -o SIZE -dn 2>/dev/null || echo "N/A")
 
   local format="%-60s %-6s %-10s %-24s %-22s %-10s %-10s %-10s\n"
   if [[ "$raw_state" == "FAULTED" ]]; then
@@ -79,7 +85,9 @@ print_device_info() {
   fi
 }
 
-if [[ "$1" == "--all" ]]; then
+# ─── Main ───────────────────────────────────────────────────
+
+if [[ "${1:-}" == "--all" ]]; then
   pools=$(zpool list -H -o name)
 else
   pools="$1"
@@ -87,16 +95,32 @@ fi
 
 print_header
 declare -A seen
+declare -A used_sd_parents
+
+# ─── ZFS Pools ──────────────────────────────────────────────
 
 for pool in $pools; do
   echo "Pool: $pool"
   get_device_states_for_pool "$pool"
-
   for dev in $(get_devices_for_pool "$pool"); do
+    part_parent=$(lsblk -no PKNAME "$dev" 2>/dev/null || true)
+    [[ -n "$part_parent" ]] && used_sd_parents["/dev/$part_parent"]=1
     if [[ -z "${seen[$dev]+x}" ]]; then
       print_device_info "$dev"
       seen[$dev]=1
     fi
   done
   echo
+done
+
+# ─── Unassigned Devices ─────────────────────────────────────
+
+echo "Unassigned Devices:"
+print_header
+
+for dev_path in /dev/sd?; do
+  if [[ -n "${used_sd_parents[$dev_path]+x}" ]]; then
+    continue
+  fi
+  print_device_info "$dev_path"
 done
