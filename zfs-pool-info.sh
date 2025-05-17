@@ -132,9 +132,9 @@ get_year_and_written() {
 }
 
 print_header() {
-  printf "%-60s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s\n" \
-    "Device" "Size" "Vendor" "Model" "Serial" "/dev/sdX" "/dev/sgX" "STATE" "Year" "Written"
-  printf "%s\n" "$(printf '%.0s-' {1..186})"
+  printf "%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-6s\n" \
+    "Device" "Size" "Vendor" "Model" "Serial" "/dev/sdX" "/dev/sgX" "STATE" "Year" "Written" "Type"
+  printf "%s\n" "$(printf '%.0s-' {1..173})"
 }
 
 print_device_info() {
@@ -142,7 +142,6 @@ print_device_info() {
   local state="${DEV_STATES[$path]:-UNUSED}"
   local sd_dev sg_dev vendor model serial year written size dev_label
 
-  # sdX or parent device
   [[ "$path" =~ ^/dev/sd[a-z]+$ ]] && sd_dev="$path" || sd_dev=$(resolve_sd "$path")
   sg_dev=$(resolve_sg "$sd_dev")
 
@@ -150,20 +149,24 @@ print_device_info() {
   IFS="|" read -r year written <<< "$(get_year_and_written "$sd_dev" "$sg_dev")"
   size=$(lsblk "$path" -o SIZE -dn 2>/dev/null || echo "N/A")
 
-  # Display path: PARTUUID for pool members, /dev/sdX for unassigned
   if [[ "$state" == "UNUSED" ]]; then
     dev_label="$sd_dev"
   else
-    # Try resolve partuuid path
     partuuid=$(blkid -s PARTUUID -o value "$path" 2>/dev/null || echo "")
-    dev_label="/dev/disk/by-partuuid/$partuuid"
+    dev_label="$partuuid"
   fi
 
-  local fmt="%-60s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s\n"
+  # Improved SMR detection (only in Model Family line)
+  local type="N/A"
+  if smartctl -i "$sd_dev" 2>/dev/null | grep -i '^Model Family:' | grep -q 'SMR'; then
+    type="SMR"
+  fi
+
+  local fmt="%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-6s\n"
   [[ "$state" == "FAULTED" ]] && printf "\033[31m$fmt\033[0m" \
-    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" \
+    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$type" \
     || printf "$fmt" \
-    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written"
+    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$type"
 }
 
 # ---------------- Main Logic ----------------
