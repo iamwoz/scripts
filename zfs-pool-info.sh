@@ -8,6 +8,19 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
+# Validate argument BEFORE doing anything else
+if [[ "$1" == "--all" ]]; then
+  pools=$(zpool list -H -o name)
+elif zpool list -H -o name | grep -q -w "$1"; then
+  pools="$1"
+else
+  echo "[ERROR] Invalid argument: '$1'"
+  echo "        Use '--all' or specify a valid ZFS pool name."
+  echo "        Available pools:"
+  zpool list -H -o name
+  exit 1
+fi
+
 OPENSEA_CACHE_DIR="${HOME}/.cache/openseachest"
 OPENSEA_SMART="${OPENSEA_CACHE_DIR}/openSeaChest_SMART"
 VERSION_FILE="${OPENSEA_CACHE_DIR}/version.txt"
@@ -170,7 +183,6 @@ print_device_info() {
   fi
 }
 
-[[ "$1" == "--all" ]] && pools=$(zpool list -H -o name) || pools="$1"
 print_header
 declare -A seen used_sd_parents
 
