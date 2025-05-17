@@ -138,21 +138,32 @@ print_header() {
 }
 
 print_device_info() {
-  local partuuid_dev="$1"
-  local state="${DEV_STATES[$partuuid_dev]:-UNUSED}"
+  local path="$1"
+  local state="${DEV_STATES[$path]:-UNUSED}"
+  local sd_dev sg_dev vendor model serial year written size dev_label
 
-  local sd_dev sg_dev vendor model serial year written size
-  [[ "$partuuid_dev" =~ ^/dev/sd[a-z]+$ ]] && sd_dev="$partuuid_dev" || sd_dev=$(resolve_sd "$partuuid_dev")
+  # sdX or parent device
+  [[ "$path" =~ ^/dev/sd[a-z]+$ ]] && sd_dev="$path" || sd_dev=$(resolve_sd "$path")
   sg_dev=$(resolve_sg "$sd_dev")
+
   IFS="|" read -r vendor model serial <<< "$(get_disk_info "$sd_dev")"
   IFS="|" read -r year written <<< "$(get_year_and_written "$sd_dev" "$sg_dev")"
-  size=$(lsblk "$partuuid_dev" -o SIZE -dn 2>/dev/null || echo "N/A")
+  size=$(lsblk "$path" -o SIZE -dn 2>/dev/null || echo "N/A")
+
+  # Display path: PARTUUID for pool members, /dev/sdX for unassigned
+  if [[ "$state" == "UNUSED" ]]; then
+    dev_label="$sd_dev"
+  else
+    # Try resolve partuuid path
+    partuuid=$(blkid -s PARTUUID -o value "$path" 2>/dev/null || echo "")
+    dev_label="/dev/disk/by-partuuid/$partuuid"
+  fi
 
   local fmt="%-60s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s\n"
   [[ "$state" == "FAULTED" ]] && printf "\033[31m$fmt\033[0m" \
-    "$partuuid_dev" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" \
+    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" \
     || printf "$fmt" \
-    "$partuuid_dev" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written"
+    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written"
 }
 
 # ---------------- Main Logic ----------------
