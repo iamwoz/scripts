@@ -2,8 +2,17 @@
 
 set -euo pipefail
 
+# ---------------- Argument check first ----------------
+if [[ $# -eq 0 ]]; then
+  echo "[USAGE] $0 <pool-name> | --all"
+  echo "         Show ZFS pool device information using smartctl and openSeaChest."
+  exit 1
+fi
+
+# ---------------- openSeaChest_SMART auto-download and caching ----------------
 OPENSEA_CACHE_DIR="${HOME}/.cache/openseachest"
 OPENSEA_SMART="${OPENSEA_CACHE_DIR}/openSeaChest_SMART"
+VERSION_FILE="${OPENSEA_CACHE_DIR}/version.txt"
 
 echo "[INFO] Checking openSeaChest_SMART availability..."
 
@@ -13,6 +22,7 @@ download_openseachest() {
   mkdir -p "$OPENSEA_CACHE_DIR"
   tmpfile=$(mktemp)
 
+  remote_ver=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | jq -r '.tag_name' | sed 's/^v//')
   release_url=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | \
     jq -r '.assets[] | select(.name | test("linux-x86_64-portable\\.tar\\.xz$")) | .browser_download_url' | head -n1)
 
@@ -29,23 +39,21 @@ download_openseachest() {
   chmod +x "$OPENSEA_SMART"
   rm "$tmpfile"
 
-  echo "[INFO] openSeaChest_SMART updated to latest version."
+  echo "$remote_ver" > "$VERSION_FILE"
+  echo "[INFO] openSeaChest_SMART updated to version $remote_ver."
 }
 
-if [[ ! -x "$OPENSEA_SMART" ]]; then
-  echo "[INFO] openSeaChest_SMART not found locally. Preparing it..."
+remote_ver=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+current_ver=$(cat "$VERSION_FILE" 2>/dev/null || echo "")
+
+if [[ "$remote_ver" != "$current_ver" || ! -x "$OPENSEA_SMART" ]]; then
+  echo "[INFO] New openSeaChest release detected or not cached (cached: ${current_ver:-none}, latest: $remote_ver), updating..."
   download_openseachest
 else
-  local_ver=$("$OPENSEA_SMART" --version 2>/dev/null | grep -i version | awk '{print $NF}' | cut -d- -f1)
-  remote_ver=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-
-  if [[ "$remote_ver" != "$local_ver" ]]; then
-    echo "[INFO] Newer openSeaChest version found ($local_ver → $remote_ver), updating..."
-    download_openseachest
-  else
-    echo "[INFO] openSeaChest_SMART is up-to-date (version $local_ver)."
-  fi
+  echo "[INFO] openSeaChest_SMART is up-to-date (cached release: $current_ver)."
 fi
+
+# ---------------- Core Script Functions ----------------
 
 get_devices_for_pool() {
   zpool status -P "$1" | grep -oE '/dev/[^ ]+' | sort -u
@@ -104,13 +112,8 @@ get_year_and_written() {
   if [[ "$sg_dev" =~ ^/dev/sg[0-9]+$ ]]; then
     smart_output=$(timeout 5 "$OPENSEA_SMART" -d "$sg_dev" -i 2>/dev/null)
 
-    # Manufacture Year
     year_os=$(echo "$smart_output" | grep -i 'Date Of Manufacture' | grep -oE '[0-9]{4}' | head -n1 || true)
-
-    # Bytes Written
     written_os=$(echo "$smart_output" | grep -i 'Total Bytes Written (TB)' | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
-
-    # Power on hours
     poh_os=$(echo "$smart_output" | grep -i 'Power On Hours' | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
 
     [[ "$year" == "N/A" && -n "$year_os" ]] && year="$year_os"
@@ -152,7 +155,9 @@ print_device_info() {
     "$partuuid_dev" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written"
 }
 
-[[ "${1:-}" == "--all" ]] && pools=$(zpool list -H -o name) || pools="$1"
+# ---------------- Main Logic ----------------
+
+[[ "$1" == "--all" ]] && pools=$(zpool list -H -o name) || pools="$1"
 print_header
 declare -A seen used_sd_parents
 
