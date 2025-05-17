@@ -2,14 +2,12 @@
 
 set -euo pipefail
 
-# ---------------- Argument check first ----------------
 if [[ $# -eq 0 ]]; then
   echo "[USAGE] $0 <pool-name> | --all"
   echo "         Show ZFS pool device information using smartctl and openSeaChest."
   exit 1
 fi
 
-# ---------------- openSeaChest_SMART auto-download and caching ----------------
 OPENSEA_CACHE_DIR="${HOME}/.cache/openseachest"
 OPENSEA_SMART="${OPENSEA_CACHE_DIR}/openSeaChest_SMART"
 VERSION_FILE="${OPENSEA_CACHE_DIR}/version.txt"
@@ -52,8 +50,6 @@ if [[ "$remote_ver" != "$current_ver" || ! -x "$OPENSEA_SMART" ]]; then
 else
   echo "[INFO] openSeaChest_SMART is up-to-date (cached release: $current_ver)."
 fi
-
-# ---------------- Core Script Functions ----------------
 
 get_devices_for_pool() {
   zpool status -P "$1" | grep -oE '/dev/[^ ]+' | sort -u
@@ -132,9 +128,9 @@ get_year_and_written() {
 }
 
 print_header() {
-  printf "%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-6s\n" \
+  printf "%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-4s\n" \
     "Device" "Size" "Vendor" "Model" "Serial" "/dev/sdX" "/dev/sgX" "STATE" "Year" "Written" "Type"
-  printf "%s\n" "$(printf '%.0s-' {1..173})"
+  printf "%s\n" "$(printf '%.0s-' {1..171})"
 }
 
 print_device_info() {
@@ -156,20 +152,23 @@ print_device_info() {
     dev_label="$partuuid"
   fi
 
-  # Improved SMR detection (only in Model Family line)
-  local type="N/A"
+  local smr="NO"
   if smartctl -i "$sd_dev" 2>/dev/null | grep -i '^Model Family:' | grep -q 'SMR'; then
-    type="SMR"
+    smr="YES"
   fi
 
-  local fmt="%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-6s\n"
-  [[ "$state" == "FAULTED" ]] && printf "\033[31m$fmt\033[0m" \
-    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$type" \
-    || printf "$fmt" \
-    "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$type"
-}
+  local fmt="%-36s %-6s %-10s %-24s %-22s %-10s %-10s %-10s %-12s %-12s %-4s\n"
 
-# ---------------- Main Logic ----------------
+  if [[ "$smr" == "YES" ]]; then
+    printf "\033[31m$fmt\033[0m" \
+      "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" \
+      "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$smr"
+  else
+    printf "$fmt" \
+      "$dev_label" "$size" "${vendor:-N/A}" "${model:-N/A}" "${serial:-N/A}" \
+      "$sd_dev" "$sg_dev" "$state" "$year" "$written" "$smr"
+  fi
+}
 
 [[ "$1" == "--all" ]] && pools=$(zpool list -H -o name) || pools="$1"
 print_header
