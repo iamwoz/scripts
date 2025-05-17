@@ -2,7 +2,50 @@
 
 set -euo pipefail
 
-OPENSEA_INFO=$(command -v openSeaChest_Info || echo "")
+OPENSEA_CACHE_DIR="${HOME}/.cache/openseachest"
+OPENSEA_SMART="${OPENSEA_CACHE_DIR}/openSeaChest_SMART"
+
+echo "[INFO] Checking openSeaChest_SMART availability..."
+
+download_openseachest() {
+  echo "[INFO] Downloading latest openSeaChest portable release..."
+
+  mkdir -p "$OPENSEA_CACHE_DIR"
+  tmpfile=$(mktemp)
+
+  release_url=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | \
+    jq -r '.assets[] | select(.name | test("linux-x86_64-portable\\.tar\\.xz$")) | .browser_download_url' | head -n1)
+
+  if [[ -z "$release_url" ]]; then
+    echo "[ERROR] Could not determine download URL from GitHub. Aborting."
+    exit 1
+  fi
+
+  echo "[INFO] Downloading: $release_url"
+  curl -L "$release_url" -o "$tmpfile"
+
+  echo "[INFO] Extracting openSeaChest_SMART to $OPENSEA_CACHE_DIR..."
+  tar -xJf "$tmpfile" -C "$OPENSEA_CACHE_DIR" --wildcards '*/openSeaChest_SMART' --strip-components=1
+  chmod +x "$OPENSEA_SMART"
+  rm "$tmpfile"
+
+  echo "[INFO] openSeaChest_SMART updated to latest version."
+}
+
+if [[ ! -x "$OPENSEA_SMART" ]]; then
+  echo "[INFO] openSeaChest_SMART not found locally. Preparing it..."
+  download_openseachest
+else
+  local_ver=$("$OPENSEA_SMART" --version 2>/dev/null | grep -i version | awk '{print $NF}' | cut -d- -f1)
+  remote_ver=$(curl -s https://api.github.com/repos/Seagate/openSeaChest/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+
+  if [[ "$remote_ver" != "$local_ver" ]]; then
+    echo "[INFO] Newer openSeaChest version found ($local_ver → $remote_ver), updating..."
+    download_openseachest
+  else
+    echo "[INFO] openSeaChest_SMART is up-to-date (version $local_ver)."
+  fi
+fi
 
 get_devices_for_pool() {
   zpool status -P "$1" | grep -oE '/dev/[^ ]+' | sort -u
@@ -58,20 +101,26 @@ get_year_and_written() {
     fi
   fi
 
-  if [[ "$sg_dev" =~ ^/dev/sg[0-9]+$ && -n "$OPENSEA_INFO" ]]; then
-    info_output=$(timeout 5 "$OPENSEA_INFO" -d "$sg_dev" -i 2>/dev/null)
-    year_os=$(echo "$info_output" | grep -i 'Date Of Manufacture' | grep -oE '[0-9]{4}' | head -n1 || true)
-    written_os=$(echo "$info_output" | grep -i 'Total Bytes Written' | grep -oE '[0-9]+\.?[0-9]*' | head -n1 || true)
-    poh_os=$(echo "$info_output" | grep -i 'Power On Hours' | grep -oE '[0-9]+\.?[0-9]*' | head -n1 || true)
+  if [[ "$sg_dev" =~ ^/dev/sg[0-9]+$ ]]; then
+    smart_output=$(timeout 5 "$OPENSEA_SMART" -d "$sg_dev" -i 2>/dev/null)
 
-    [[ -n "$written_os" ]] && written="$written_os TB"
+    # Manufacture Year
+    year_os=$(echo "$smart_output" | grep -i 'Date Of Manufacture' | grep -oE '[0-9]{4}' | head -n1 || true)
+
+    # Bytes Written
+    written_os=$(echo "$smart_output" | grep -i 'Total Bytes Written (TB)' | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
+
+    # Power on hours
+    poh_os=$(echo "$smart_output" | grep -i 'Power On Hours' | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
+
     [[ "$year" == "N/A" && -n "$year_os" ]] && year="$year_os"
     [[ -z "$poh" && -n "$poh_os" ]] && poh="$poh_os"
+    [[ -n "$written_os" ]] && written="$written_os TB"
   fi
 
   if [[ "$year" == "N/A" && -n "$poh" ]]; then
     local current_year=$(date +%Y)
-    local poh_int=${poh%.*}  # truncate decimals if present
+    local poh_int=${poh%.*}
     local est_year=$(( current_year - poh_int / 8760 ))
     year="$est_year (est.)"
   fi
