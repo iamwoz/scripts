@@ -1,0 +1,13 @@
+[Unit]
+Description=Fix /etc/fancontrol if Corsair hwmon label or path changes
+After=multi-user.target
+ConditionPathExists=/etc/fancontrol
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fix-fancontrol-corsair-label.sh --apply
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
